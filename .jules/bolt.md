@@ -1,0 +1,3 @@
+## 2026-08-15 - Caching yt-dlp Video Info & Setting noplaylist
+**Learning:** Network calls to extract video metadata via `yt-dlp` take ~1-2s per request. Repeated queries for identical URLs can be accelerated to sub-millisecond (<0.001s) responses by wrapping metadata retrieval in `@functools.lru_cache`. Additionally, setting `'noplaylist': True` prevents unnecessary parsing of full playlist structures when playlist parameters (`&list=...`) are present in single video URLs.
+**Action:** Always use `noplaylist: True` when operating on individual video links in `yt-dlp`, and cache metadata extractions using LRU caches when video properties are repeatedly queried.
