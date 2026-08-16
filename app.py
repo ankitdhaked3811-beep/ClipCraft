@@ -6,7 +6,7 @@ import os
 import threading
 import time
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
@@ -33,7 +33,8 @@ def get_info():
     if not url:
         return jsonify({'error': 'URL required'}), 400
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+        # Optimization: noplaylist=True avoids extracting entire playlist metadata when a video URL includes list params, saving O(N) network calls
+        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True, 'noplaylist': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
         return jsonify({
@@ -81,6 +82,8 @@ def create_clip():
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
                 'quiet': True,
+                # Optimization: noplaylist=True prevents downloading/processing full playlist
+                'noplaylist': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
@@ -97,6 +100,8 @@ def create_clip():
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
                 'quiet': True,
+                # Optimization: noplaylist=True prevents downloading/processing full playlist
+                'noplaylist': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
@@ -117,6 +122,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
