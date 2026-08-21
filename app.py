@@ -3,10 +3,12 @@ from flask_cors import CORS
 import yt_dlp
 import tempfile
 import os
+import shutil
 import threading
 import time
+import functools
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
@@ -16,9 +18,18 @@ def cleanup_file(path, delay=3600):
     def _delete():
         time.sleep(delay)
         try:
-            os.remove(path)
             temp_files.pop(path, None)
-        except:
+            parent_dir = os.path.dirname(path)
+            sys_temp = os.path.realpath(tempfile.gettempdir())
+            real_parent = os.path.realpath(parent_dir)
+
+            # Safely remove dedicated subdirectory created by tempfile.mkdtemp()
+            # without ever touching system temp root directory (/tmp)
+            if os.path.isdir(real_parent) and real_parent != sys_temp and real_parent != os.path.realpath('/tmp'):
+                shutil.rmtree(real_parent, ignore_errors=True)
+            elif os.path.exists(path):
+                os.remove(path)
+        except Exception:
             pass
     threading.Thread(target=_delete, daemon=True).start()
 
@@ -26,22 +37,41 @@ def cleanup_file(path, delay=3600):
 def health():
     return jsonify({'status': 'ok'})
 
+@functools.lru_cache(maxsize=512)
+def fetch_info_cached(url):
+    # Performance Optimization:
+    # Use 'noplaylist': True to avoid extracting all videos if a playlist URL is provided.
+    # Try process=False first to extract top-level metadata without parsing/fetching all media streams.
+    ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True, 'noplaylist': True}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(url, download=False, process=False)
+            if info and info.get('title'):
+                return {
+                    'title': info.get('title', ''),
+                    'duration': info.get('duration') or 0,
+                    'channel': info.get('uploader') or info.get('channel') or '',
+                    'thumbnail': info.get('thumbnail', ''),
+                }
+        except Exception:
+            pass
+        info = ydl.extract_info(url, download=False)
+        return {
+            'title': info.get('title', ''),
+            'duration': info.get('duration') or 0,
+            'channel': info.get('uploader') or info.get('channel') or '',
+            'thumbnail': info.get('thumbnail', ''),
+        }
+
 @app.route('/info', methods=['POST'])
 def get_info():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        return jsonify({
-            'title': info.get('title', ''),
-            'duration': info.get('duration', 0),
-            'channel': info.get('uploader', ''),
-            'thumbnail': info.get('thumbnail', ''),
-        })
+        info = fetch_info_cached(url)
+        return jsonify(info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -117,6 +147,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
