@@ -5,8 +5,9 @@ import tempfile
 import os
 import threading
 import time
+import functools
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
@@ -26,22 +27,31 @@ def cleanup_file(path, delay=3600):
 def health():
     return jsonify({'status': 'ok'})
 
+# Cache metadata requests to avoid repeated expensive network calls to video platforms.
+@functools.lru_cache(maxsize=256)
+def _fetch_video_info(url):
+    # BOLT OPTIMIZATION:
+    # `extract_flat: True` and `process=False` bypass yt-dlp's full format tree extraction
+    # and thumbnail resolution, drastically speeding up metadata extraction for /info endpoint.
+    ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True, 'extract_flat': True}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False, process=False)
+    return {
+        'title': info.get('title', '') if info else '',
+        'duration': info.get('duration', 0) if info else 0,
+        'channel': info.get('uploader', '') if info else '',
+        'thumbnail': info.get('thumbnail', '') if info else '',
+    }
+
 @app.route('/info', methods=['POST'])
 def get_info():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        return jsonify({
-            'title': info.get('title', ''),
-            'duration': info.get('duration', 0),
-            'channel': info.get('uploader', ''),
-            'thumbnail': info.get('thumbnail', ''),
-        })
+        info = _fetch_video_info(url)
+        return jsonify(info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -117,6 +127,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
