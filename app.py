@@ -6,7 +6,7 @@ import os
 import threading
 import time
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
@@ -33,7 +33,15 @@ def get_info():
     if not url:
         return jsonify({'error': 'URL required'}), 400
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+        # Performance optimization: Add noplaylist and extract_flat to skip playlist extraction
+        # and unnecessary format evaluation when fetching metadata for a single video.
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'noplaylist': True,
+            'extract_flat': 'in_playlist',
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
         return jsonify({
@@ -117,6 +125,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
