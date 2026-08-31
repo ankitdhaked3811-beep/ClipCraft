@@ -1,0 +1,3 @@
+## 2026-08-31 - Cache Metadata Extraction & Disable Playlist Fetching
+**Learning:** Video info extraction using `yt-dlp` makes network calls that can take hundreds of milliseconds or seconds per request. Wrapping metadata extraction in an LRU cache (`@functools.lru_cache(maxsize=128)`) reduces response times for duplicate URLs to sub-millisecond level. Additionally, setting `noplaylist: True` prevents `yt-dlp` from fetching playlist entries when a user inputs a playlist link into `/info`.
+**Action:** Always check if external media info calls can be cached or restricted to single entries (`noplaylist: True`).
