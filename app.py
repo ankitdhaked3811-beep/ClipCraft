@@ -3,22 +3,46 @@ from flask_cors import CORS
 import yt_dlp
 import tempfile
 import os
+import shutil
 import threading
 import time
+import functools
 
-app = Flask(name)
+app = Flask(__name__)
+
+# Cache metadata requests to avoid redundant yt_dlp network calls (~1s -> ~0ms response time)
+@functools.lru_cache(maxsize=128)
+def fetch_video_info(url):
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'noplaylist': True,
+        'extract_flat': 'in_playlist',
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    return {
+        'title': info.get('title', ''),
+        'duration': info.get('duration', 0),
+        'channel': info.get('uploader', ''),
+        'thumbnail': info.get('thumbnail', ''),
+    }
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
 temp_files = {}
 
-def cleanup_file(path, delay=3600):
+def cleanup_file(path, delay=3600, tmpdir=None):
     def _delete():
         time.sleep(delay)
         try:
-            os.remove(path)
+            if tmpdir and os.path.exists(tmpdir):
+                shutil.rmtree(tmpdir, ignore_errors=True)
+            elif os.path.exists(path):
+                os.remove(path)
             temp_files.pop(path, None)
-        except:
+        except Exception:
             pass
     threading.Thread(target=_delete, daemon=True).start()
 
@@ -33,15 +57,7 @@ def get_info():
     if not url:
         return jsonify({'error': 'URL required'}), 400
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        return jsonify({
-            'title': info.get('title', ''),
-            'duration': info.get('duration', 0),
-            'channel': info.get('uploader', ''),
-            'thumbnail': info.get('thumbnail', ''),
-        })
+        return jsonify(fetch_video_info(url).copy())
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -105,7 +121,7 @@ def create_clip():
             return jsonify({'error': 'Download failed'}), 500
 
         temp_files[out_path] = True
-        cleanup_file(out_path)
+        cleanup_file(out_path, tmpdir=tmpdir)
 
         return send_file(
             out_path,
@@ -117,6 +133,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
