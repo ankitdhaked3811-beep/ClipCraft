@@ -6,11 +6,40 @@ import os
 import threading
 import time
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
 temp_files = {}
+
+# In-memory TTL Cache with max size limit for video metadata (/info route)
+INFO_CACHE = {}
+CACHE_TTL_SECONDS = 300  # 5 minutes cache duration
+MAX_CACHE_SIZE = 1000  # Prevent unbounded memory growth
+
+def get_cached_info(url):
+    now = time.time()
+    if url in INFO_CACHE:
+        data, timestamp = INFO_CACHE[url]
+        if now - timestamp < CACHE_TTL_SECONDS:
+            return data
+        else:
+            del INFO_CACHE[url]
+    return None
+
+def set_cached_info(url, data):
+    now = time.time()
+    # Evict expired entries or oldest entry if max size reached
+    if len(INFO_CACHE) >= MAX_CACHE_SIZE:
+        expired_keys = [k for k, (v, ts) in INFO_CACHE.items() if now - ts >= CACHE_TTL_SECONDS]
+        if expired_keys:
+            for k in expired_keys:
+                del INFO_CACHE[k]
+        else:
+            # Evict oldest entry
+            oldest_key = min(INFO_CACHE.keys(), key=lambda k: INFO_CACHE[k][1])
+            del INFO_CACHE[oldest_key]
+    INFO_CACHE[url] = (data, now)
 
 def cleanup_file(path, delay=3600):
     def _delete():
@@ -28,26 +57,34 @@ def health():
 
 @app.route('/info', methods=['POST'])
 def get_info():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
+
+    # Optimization: Return cached metadata if available to avoid expensive yt-dlp network fetches (~1-3s savings per request)
+    cached_info = get_cached_info(url)
+    if cached_info:
+        return jsonify(cached_info)
+
     try:
         ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-        return jsonify({
+        result = {
             'title': info.get('title', ''),
             'duration': info.get('duration', 0),
             'channel': info.get('uploader', ''),
             'thumbnail': info.get('thumbnail', ''),
-        })
+        }
+        set_cached_info(url, result)
+        return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/clip', methods=['POST'])
 def create_clip():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     start = float(data.get('start', 0))
     end = float(data.get('end', 60))
@@ -117,6 +154,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
