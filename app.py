@@ -6,11 +6,17 @@ import os
 import threading
 import time
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
 temp_files = {}
+
+# In-memory TTL cache for video info metadata (URL -> (info_dict, expiry_timestamp))
+# Helps avoid repeated slow network calls via yt_dlp for identical URLs.
+info_cache = {}
+INFO_CACHE_TTL = 300  # Cache duration in seconds (5 minutes)
+MAX_CACHE_SIZE = 500  # Bounded size to prevent unbounded memory growth
 
 def cleanup_file(path, delay=3600):
     def _delete():
@@ -32,16 +38,48 @@ def get_info():
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
+
+    now = time.time()
+    # Check if response is cached and not expired
+    if url in info_cache:
+        cached_info, expiry = info_cache[url]
+        if now < expiry:
+            return jsonify(cached_info)
+        else:
+            info_cache.pop(url, None)
+
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'noplaylist': True,  # Optimization: prevent extracting entire playlists if URL contains playlist ID
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-        return jsonify({
+
+        result = {
             'title': info.get('title', ''),
             'duration': info.get('duration', 0),
             'channel': info.get('uploader', ''),
             'thumbnail': info.get('thumbnail', ''),
-        })
+        }
+
+        # Evict oldest entries if cache exceeds MAX_CACHE_SIZE
+        if len(info_cache) >= MAX_CACHE_SIZE:
+            # Remove expired or first key
+            expired_keys = [k for k, (_, exp) in info_cache.items() if now >= exp]
+            if expired_keys:
+                for k in expired_keys:
+                    info_cache.pop(k, None)
+            else:
+                first_key = next(iter(info_cache))
+                info_cache.pop(first_key, None)
+
+        # Cache result
+        info_cache[url] = (result, now + INFO_CACHE_TTL)
+
+        return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -117,6 +155,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

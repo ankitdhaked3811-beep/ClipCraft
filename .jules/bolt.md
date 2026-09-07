@@ -1,0 +1,3 @@
+## 2025-03-07 - In-Memory TTL Metadata Caching for yt-dlp Extractor
+**Learning:** External network calls to video metadata extractors like `yt-dlp` in web backends take 0.5s–3s per request. Introducing bounded in-memory TTL caching for `/info` endpoints eliminates identical network requests completely for cached URLs (sub-millisecond response time) and `noplaylist: True` prevents unnecessary parsing overhead when URLs include playlist query parameters.
+**Action:** Always cache metadata calls with a TTL and maximum size bound when handling external URL metadata parsing, and set `noplaylist: True` for single-video info requests.
