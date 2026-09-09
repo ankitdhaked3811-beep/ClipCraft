@@ -1,0 +1,3 @@
+## 2025-05-18 - LRU Caching for yt_dlp Video Metadata and noplaylist Option
+**Learning:** `yt_dlp.extract_info` makes network requests to YouTube/external servers on every invocation, taking hundreds of milliseconds to several seconds. Caching `yt_dlp` metadata responses with `functools.lru_cache` reduces response times to sub-millisecond level for repeated video info requests. Furthermore, setting `noplaylist: True` prevents `yt_dlp` from fetching metadata for an entire playlist when given video links containing playlist URL parameters (`&list=...`).
+**Action:** Always wrap `yt_dlp` extraction calls in an in-memory cache when metadata doesn't change frequently, and explicitly set `noplaylist: True` when working with individual video downloads or clips.
