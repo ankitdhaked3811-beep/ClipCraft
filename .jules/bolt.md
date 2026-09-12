@@ -1,0 +1,3 @@
+## 2024-09-12 - Flask response.call_on_close for immediate temporary file cleanup
+**Learning:** In Flask services using `send_file` with temporary files, background delay threads (`threading.Thread` with `time.sleep`) cause disk accumulation and memory growth. Using Flask/Werkzeug's `@response.call_on_close` decorator allows immediate deletion (`shutil.rmtree`) when the response finishes streaming to the client. Additionally, `yt_dlp` options should include `'noplaylist': True` when dealing with individual video clips to avoid extracting full playlist metadata unnecessarily.
+**Action:** Use `@response.call_on_close` for temporary file cleanup in Flask streaming endpoints and include `'noplaylist': True` in `yt_dlp` options.

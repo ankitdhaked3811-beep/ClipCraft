@@ -3,24 +3,10 @@ from flask_cors import CORS
 import yt_dlp
 import tempfile
 import os
-import threading
-import time
+import shutil
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
-
-# Store temp files and auto-delete after 1 hour
-temp_files = {}
-
-def cleanup_file(path, delay=3600):
-    def _delete():
-        time.sleep(delay)
-        try:
-            os.remove(path)
-            temp_files.pop(path, None)
-        except:
-            pass
-    threading.Thread(target=_delete, daemon=True).start()
 
 @app.route('/health')
 def health():
@@ -28,12 +14,13 @@ def health():
 
 @app.route('/info', methods=['POST'])
 def get_info():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+        # Optimization: noplaylist prevents yt_dlp from parsing entire playlists when given a video URL with a list query param.
+        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True, 'noplaylist': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
         return jsonify({
@@ -47,7 +34,7 @@ def get_info():
 
 @app.route('/clip', methods=['POST'])
 def create_clip():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     start = float(data.get('start', 0))
     end = float(data.get('end', 60))
@@ -59,7 +46,6 @@ def create_clip():
     if end - start > 185:
         return jsonify({'error': 'Max 3 minutes allowed'}), 400
 
-    duration = end - start
     quality_map = {'1080p': '1080', '720p': '720', '480p': '480', '360p': '360'}
     q = quality_map.get(quality, '720')
 
@@ -81,6 +67,7 @@ def create_clip():
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
                 'quiet': True,
+                'noplaylist': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
@@ -97,26 +84,35 @@ def create_clip():
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
                 'quiet': True,
+                'noplaylist': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
         if not os.path.exists(out_path):
+            shutil.rmtree(tmpdir, ignore_errors=True)
             return jsonify({'error': 'Download failed'}), 500
 
-        temp_files[out_path] = True
-        cleanup_file(out_path)
-
-        return send_file(
+        # Optimization: Immediate resource cleanup on HTTP response finish instead of sleeping 1 hour in background thread.
+        # This prevents disk space leaks (temporary directory leftover) and memory leaks (global dictionary tracking).
+        response = send_file(
             out_path,
             as_attachment=True,
             download_name=f'clip_{int(start)}_{int(end)}.{ext}',
             mimetype='audio/mpeg' if ext == 'mp3' else 'video/mp4'
         )
 
+        @response.call_on_close
+        def cleanup():
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+        return response
+
     except Exception as e:
+        if 'tmpdir' in locals():
+            shutil.rmtree(tmpdir, ignore_errors=True)
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
