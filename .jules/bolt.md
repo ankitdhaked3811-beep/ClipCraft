@@ -1,0 +1,3 @@
+## 2025-05-18 - Video Info Caching and Playlist Option Optimization
+**Learning:** `yt_dlp.extract_info` performs external HTTP network requests to video hosting providers, which take ~500ms–2000ms per call. Additionally, passing a video URL containing `list=` parameters causes `yt_dlp` to extract full playlist metadata by default unless explicitly disabled.
+**Action:** Wrap metadata extraction helper functions with `@functools.lru_cache(maxsize=256)` for instant response times on duplicate requests, and set `'noplaylist': True` in `ydl_opts` to prevent unnecessary full-playlist extractions for video URLs.
