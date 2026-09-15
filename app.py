@@ -5,8 +5,9 @@ import tempfile
 import os
 import threading
 import time
+import functools
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
@@ -22,20 +23,27 @@ def cleanup_file(path, delay=3600):
             pass
     threading.Thread(target=_delete, daemon=True).start()
 
+# Bolt ⚡ Optimization: Cache video metadata extraction using functools.lru_cache.
+# Extracting info via yt_dlp requires external network round-trips to media platforms (typically 500ms+).
+# Caching up to 256 recent video metadata requests reduces response time to ~0ms for repeated queries.
+@functools.lru_cache(maxsize=256)
+def _extract_info_cached(url):
+    ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        return ydl.extract_info(url, download=False)
+
 @app.route('/health')
 def health():
     return jsonify({'status': 'ok'})
 
 @app.route('/info', methods=['POST'])
 def get_info():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = _extract_info_cached(url)
         return jsonify({
             'title': info.get('title', ''),
             'duration': info.get('duration', 0),
@@ -47,7 +55,7 @@ def get_info():
 
 @app.route('/clip', methods=['POST'])
 def create_clip():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     start = float(data.get('start', 0))
     end = float(data.get('end', 60))
@@ -117,6 +125,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
