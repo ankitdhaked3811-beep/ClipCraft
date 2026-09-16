@@ -5,8 +5,9 @@ import tempfile
 import os
 import threading
 import time
+from functools import lru_cache
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
@@ -26,22 +27,28 @@ def cleanup_file(path, delay=3600):
 def health():
     return jsonify({'status': 'ok'})
 
-@app.route('/info', methods=['POST'])
-def get_info():
-    data = request.json
-    url = data.get('url')
-    if not url:
-        return jsonify({'error': 'URL required'}), 400
-    try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        return jsonify({
+# Cache up to 256 video metadata responses in memory to eliminate redundant network calls and yt_dlp extractions
+@lru_cache(maxsize=256)
+def _extract_video_info(url: str) -> dict:
+    ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return {
             'title': info.get('title', ''),
             'duration': info.get('duration', 0),
             'channel': info.get('uploader', ''),
             'thumbnail': info.get('thumbnail', ''),
-        })
+        }
+
+@app.route('/info', methods=['POST'])
+def get_info():
+    data = request.json or {}
+    url = data.get('url')
+    if not url:
+        return jsonify({'error': 'URL required'}), 400
+    try:
+        info_data = _extract_video_info(url)
+        return jsonify(info_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -117,6 +124,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
