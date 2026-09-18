@@ -6,19 +6,44 @@ import os
 import threading
 import time
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
 temp_files = {}
 
+# In-memory TTL cache for video metadata (5 minute TTL)
+# Bypasses slow network extraction calls to yt_dlp for repeat queries (down from ~1-3s to <1ms)
+INFO_CACHE = {}
+CACHE_TTL_SECONDS = 300
+MAX_CACHE_ENTRIES = 500
+
+def get_cached_info(url):
+    now = time.time()
+    if url in INFO_CACHE:
+        timestamp, result = INFO_CACHE[url]
+        if now - timestamp < CACHE_TTL_SECONDS:
+            return result
+        else:
+            INFO_CACHE.pop(url, None)
+    return None
+
+def set_cached_info(url, result):
+    if len(INFO_CACHE) >= MAX_CACHE_ENTRIES:
+        INFO_CACHE.clear()
+    INFO_CACHE[url] = (time.time(), result)
+
 def cleanup_file(path, delay=3600):
     def _delete():
         time.sleep(delay)
         try:
-            os.remove(path)
+            if os.path.exists(path):
+                os.remove(path)
+            parent_dir = os.path.dirname(path)
+            if os.path.exists(parent_dir) and not os.listdir(parent_dir):
+                os.rmdir(parent_dir)
             temp_files.pop(path, None)
-        except:
+        except Exception:
             pass
     threading.Thread(target=_delete, daemon=True).start()
 
@@ -28,26 +53,41 @@ def health():
 
 @app.route('/info', methods=['POST'])
 def get_info():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
+
+    # Performance optimization: Check cache first to return metadata in <1ms without blocking on yt_dlp
+    cached_res = get_cached_info(url)
+    if cached_res is not None:
+        return jsonify(cached_res)
+
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+        # Performance optimization: noplaylist prevents full playlist resolution when single video URL is passed
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'noplaylist': True,
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-        return jsonify({
+
+        res = {
             'title': info.get('title', ''),
             'duration': info.get('duration', 0),
             'channel': info.get('uploader', ''),
             'thumbnail': info.get('thumbnail', ''),
-        })
+        }
+        set_cached_info(url, res)
+        return jsonify(res)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/clip', methods=['POST'])
 def create_clip():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     start = float(data.get('start', 0))
     end = float(data.get('end', 60))
@@ -70,6 +110,9 @@ def create_clip():
 
         if format_type == 'audio':
             audio_quality = '320' if quality == '320kbps' else '128'
+            # Performance optimizations:
+            # - noplaylist avoids playlist metadata extraction
+            # - concurrent_fragment_downloads downloads fragments concurrently with 4 workers
             ydl_opts = {
                 'format': 'bestaudio/best',
                 'outtmpl': os.path.join(tmpdir, 'clip.%(ext)s'),
@@ -81,6 +124,8 @@ def create_clip():
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
                 'quiet': True,
+                'noplaylist': True,
+                'concurrent_fragment_downloads': 4,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
@@ -90,6 +135,9 @@ def create_clip():
                     out_path = os.path.join(tmpdir, f)
                     break
         else:
+            # Performance optimizations:
+            # - noplaylist avoids playlist metadata extraction
+            # - concurrent_fragment_downloads downloads fragments concurrently with 4 workers
             ydl_opts = {
                 'format': f'bestvideo[height<={q}]+bestaudio/best[height<={q}]',
                 'outtmpl': out_path,
@@ -97,6 +145,8 @@ def create_clip():
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
                 'quiet': True,
+                'noplaylist': True,
+                'concurrent_fragment_downloads': 4,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
@@ -117,6 +167,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
