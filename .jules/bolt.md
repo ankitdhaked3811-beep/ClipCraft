@@ -1,0 +1,3 @@
+## 2025-05-20 - Video Metadata Caching & Playlist Skipping
+**Learning:** `yt_dlp` network calls during `/info` video metadata extractions take hundreds of milliseconds or seconds per request. Caching video metadata responses with `@lru_cache` reduces latency for repeated metadata queries from ~1-3s to <1ms. Furthermore, passing `noplaylist: True` prevents `yt_dlp` from fetching metadata for an entire playlist when single video links contain playlist query parameters (`list=...`), avoiding massive request delays.
+**Action:** Always set `noplaylist: True` when dealing with single-video queries and cache metadata endpoint results when inputs are idempotent URLs.
