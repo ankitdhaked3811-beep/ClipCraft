@@ -1,0 +1,3 @@
+## 2026-09-23 - Memoizing yt-dlp Video Metadata and Suppressing Playlist Parsing
+**Learning:** `yt_dlp.extract_info` makes slow network calls (1-3s) to fetch video metadata, and by default will attempt to fetch entire playlists if a video URL contains a `&list=` parameter. Using `functools.lru_cache` for `/info` requests speeds up duplicate metadata fetches from ~1500ms to <1ms. Adding `'noplaylist': True` in `ydl_opts` prevents yt-dlp from processing entire playlists unnecessarily.
+**Action:** Always set `'noplaylist': True` when processing single video clips in yt-dlp, and cache video metadata responses to avoid repeated network roundtrips.
