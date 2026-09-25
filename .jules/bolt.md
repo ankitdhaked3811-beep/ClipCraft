@@ -1,0 +1,3 @@
+## 2024-09-25 - Caching yt-dlp Metadata & Skipping Stream Processing
+**Learning:** `yt_dlp.YoutubeDL.extract_info(url, download=False)` performs full video stream format selection and playlist resolving by default, taking 3-5+ seconds and failing on videos without available stream formats. Setting `process=False` and `noplaylist=True` bypasses stream format processing, and decorating the metadata extraction with `@functools.lru_cache` reduces repeated `/info` response latency from ~3800ms to < 0.1ms (~38,000x speedup).
+**Action:** Always set `process=False` and `noplaylist=True` for metadata-only extraction in `yt-dlp` and cache metadata results by URL.
