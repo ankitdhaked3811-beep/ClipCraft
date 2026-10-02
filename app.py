@@ -6,7 +6,14 @@ import os
 import threading
 import time
 
-app = Flask(name)
+app = Flask(__name__)
+
+# Cache for video info to avoid redundant ytdlp network extraction calls
+# Maps url -> (timestamp, data_dict)
+info_cache = {}
+info_cache_lock = threading.Lock()
+CACHE_TTL_SECONDS = 3600  # 1 hour
+MAX_CACHE_SIZE = 500
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
@@ -32,16 +39,40 @@ def get_info():
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
+
+    now = time.time()
+    # Check if URL metadata is cached and valid
+    with info_cache_lock:
+        if url in info_cache:
+            cached_time, cached_data = info_cache[url]
+            if now - cached_time < CACHE_TTL_SECONDS:
+                return jsonify(cached_data)
+            else:
+                del info_cache[url]
+
     try:
         ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-        return jsonify({
+
+        res_data = {
             'title': info.get('title', ''),
             'duration': info.get('duration', 0),
             'channel': info.get('uploader', ''),
             'thumbnail': info.get('thumbnail', ''),
-        })
+        }
+
+        # Cache result, managing max cache size safely with lock
+        with info_cache_lock:
+            if len(info_cache) >= MAX_CACHE_SIZE:
+                # Simple eviction: remove oldest 20% entries
+                keys_to_remove = sorted(info_cache.keys(), key=lambda k: info_cache.get(k, (0, None))[0])[:MAX_CACHE_SIZE // 5]
+                for k in keys_to_remove:
+                    info_cache.pop(k, None)
+
+            info_cache[url] = (now, res_data)
+
+        return jsonify(res_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -117,6 +148,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
