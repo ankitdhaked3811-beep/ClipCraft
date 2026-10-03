@@ -1,0 +1,3 @@
+## 2025-05-18 - Fast yt-dlp metadata extraction with process=False and LRU Caching
+**Learning:** Calling `yt_dlp.extract_info(url, download=False)` defaults to full format processing and deciphering for all stream variants, making metadata extraction slow (~3-4s per request) and prone to format extraction errors on updated media platforms. Passing `process=False` extracts top-level metadata directly without processing individual video format streams. Combining `process=False` with `functools.lru_cache` reduces repeated `/info` response times from ~3,800 ms to < 0.01 ms.
+**Action:** When fetching video metadata without downloading, pass `process=False` to `ydl.extract_info` with a fallback to full extraction if needed, and wrap in `@lru_cache` for repeated lookups.
