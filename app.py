@@ -5,8 +5,9 @@ import tempfile
 import os
 import threading
 import time
+from functools import lru_cache
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
@@ -22,6 +23,18 @@ def cleanup_file(path, delay=3600):
             pass
     threading.Thread(target=_delete, daemon=True).start()
 
+# Cache up to 256 video info responses in memory to prevent repeated network round-trips for metadata
+@lru_cache(maxsize=256)
+def fetch_video_info(url: str) -> dict:
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'noplaylist': True,  # Prevent parsing entire playlist if URL contains playlist params
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        return ydl.extract_info(url, download=False)
+
 @app.route('/health')
 def health():
     return jsonify({'status': 'ok'})
@@ -33,9 +46,7 @@ def get_info():
     if not url:
         return jsonify({'error': 'URL required'}), 400
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = fetch_video_info(url)
         return jsonify({
             'title': info.get('title', ''),
             'duration': info.get('duration', 0),
@@ -80,6 +91,7 @@ def create_clip():
                 }],
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
+                'noplaylist': True,
                 'quiet': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -96,6 +108,7 @@ def create_clip():
                 'merge_output_format': 'mp4',
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
+                'noplaylist': True,
                 'quiet': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -117,6 +130,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
