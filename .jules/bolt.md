@@ -1,0 +1,3 @@
+## 2024-10-08 - Caching yt-dlp Video Metadata and Suppressing Playlist Parsing
+**Learning:** Fetching video metadata via yt-dlp involves remote network calls and page parsing that can take 1–3 seconds per query. Additionally, URLs with playlist query parameters (e.g., `&list=...`) can cause yt-dlp to parse all items in the playlist, introducing significant latency.
+**Action:** Use `functools.lru_cache` on helper functions fetching video metadata and pass `'noplaylist': True` in `yt_dlp.YoutubeDL` options to eliminate duplicate network calls (~1-3s -> ~0ms) and avoid accidental playlist parsing.
