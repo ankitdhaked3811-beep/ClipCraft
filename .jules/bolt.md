@@ -1,0 +1,3 @@
+## 2025-05-18 - Metadata Caching and Parallel Fragment Downloads in yt-dlp Applications
+**Learning:** Extracting video info with `yt_dlp` without caching takes 1.5s to 3s per call because it fetches network manifests. Caching metadata responses via `@lru_cache` drops repeat response times to under 0.1ms. Furthermore, passing URLs with `&list=...` forces `yt_dlp` to extract all playlist items unless `noplaylist: True` is explicitly configured.
+**Action:** Always enable `@lru_cache` for metadata extraction endpoints and include `noplaylist: True` and `concurrent_fragment_downloads: 4` in `ydl_opts` for Flask video downloading microservices.
