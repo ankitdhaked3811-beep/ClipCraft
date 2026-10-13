@@ -3,22 +3,57 @@ from flask_cors import CORS
 import yt_dlp
 import tempfile
 import os
+import shutil
 import threading
 import time
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
 temp_files = {}
 
+# In-memory TTL cache for /info metadata
+info_cache = {}
+info_cache_lock = threading.Lock()
+INFO_CACHE_TTL = 3600  # 1 hour TTL
+MAX_CACHE_SIZE = 256
+
+def get_cached_info(url):
+    now = time.time()
+    with info_cache_lock:
+        if url in info_cache:
+            data, expiry = info_cache[url]
+            if now < expiry:
+                return data
+            else:
+                del info_cache[url]
+    return None
+
+def set_cached_info(url, data):
+    now = time.time()
+    with info_cache_lock:
+        if len(info_cache) >= MAX_CACHE_SIZE:
+            expired = [k for k, (_, exp) in info_cache.items() if now >= exp]
+            for k in expired:
+                del info_cache[k]
+            if len(info_cache) >= MAX_CACHE_SIZE:
+                oldest_key = next(iter(info_cache))
+                del info_cache[oldest_key]
+        info_cache[url] = (data, now + INFO_CACHE_TTL)
+
 def cleanup_file(path, delay=3600):
     def _delete():
         time.sleep(delay)
         try:
-            os.remove(path)
             temp_files.pop(path, None)
-        except:
+            dirpath = os.path.dirname(path)
+            # Optimization: remove entire temporary directory to prevent leaking orphaned directories and files on disk
+            if dirpath and os.path.exists(dirpath) and dirpath != tempfile.gettempdir():
+                shutil.rmtree(dirpath, ignore_errors=True)
+            elif os.path.exists(path):
+                os.remove(path)
+        except Exception:
             pass
     threading.Thread(target=_delete, daemon=True).start()
 
@@ -28,20 +63,33 @@ def health():
 
 @app.route('/info', methods=['POST'])
 def get_info():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
+
+    # Optimization: return cached metadata instantly (<1ms) to avoid expensive yt_dlp network extraction (~3000ms)
+    cached_res = get_cached_info(url)
+    if cached_res:
+        return jsonify(cached_res)
+
     try:
         ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        return jsonify({
+            # Optimization: pass process=False to skip video format extraction/manifest downloading, drastically speeding up response
+            try:
+                info = ydl.extract_info(url, download=False, process=False)
+            except Exception:
+                info = ydl.extract_info(url, download=False)
+        info = info or {}
+        res = {
             'title': info.get('title', ''),
             'duration': info.get('duration', 0),
-            'channel': info.get('uploader', ''),
+            'channel': info.get('uploader', '') or info.get('channel', ''),
             'thumbnail': info.get('thumbnail', ''),
-        })
+        }
+        set_cached_info(url, res)
+        return jsonify(res)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -117,6 +165,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

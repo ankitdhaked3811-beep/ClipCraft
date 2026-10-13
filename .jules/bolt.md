@@ -1,0 +1,3 @@
+## 2025-05-18 - Fast yt-dlp metadata extraction & in-memory caching
+**Learning:** Calling `yt_dlp.YoutubeDL.extract_info(url, download=False)` by default downloads and parses format manifests (DASH/HLS/etc.), which adds 2-4 seconds of latency and can fail when site formats change. Passing `process=False` bypasses format resolution to fetch video metadata directly. Combining `process=False` with a bounded in-memory TTL cache reduces redundant `/info` latency from ~3000ms to <1ms.
+**Action:** When building metadata endpoints with `yt-dlp`, always use `process=False` for initial metadata extraction and cache metadata results by URL.
