@@ -3,10 +3,12 @@ from flask_cors import CORS
 import yt_dlp
 import tempfile
 import os
+import shutil
 import threading
 import time
+from functools import lru_cache
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
@@ -16,9 +18,14 @@ def cleanup_file(path, delay=3600):
     def _delete():
         time.sleep(delay)
         try:
-            os.remove(path)
-            temp_files.pop(path, None)
-        except:
+            if os.path.isfile(path):
+                tmpdir = os.path.dirname(path)
+                os.remove(path)
+                temp_files.pop(path, None)
+                # Safely delete the isolated temp directory if it's not the system temp folder
+                if tmpdir and os.path.exists(tmpdir) and os.path.abspath(tmpdir) != os.path.abspath(tempfile.gettempdir()):
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
             pass
     threading.Thread(target=_delete, daemon=True).start()
 
@@ -26,28 +33,42 @@ def cleanup_file(path, delay=3600):
 def health():
     return jsonify({'status': 'ok'})
 
+# Performance Optimization: Cache video info extraction using LRU cache
+# to avoid expensive, redundant remote network requests for duplicate URLs.
+# Setting 'noplaylist': True prevents downloading metadata for entire playlists.
+@lru_cache(maxsize=256)
+def _extract_video_info(url):
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'noplaylist': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    return {
+        'title': info.get('title', ''),
+        'duration': info.get('duration', 0),
+        'channel': info.get('uploader', ''),
+        'thumbnail': info.get('thumbnail', ''),
+    }
+
 @app.route('/info', methods=['POST'])
 def get_info():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        return jsonify({
-            'title': info.get('title', ''),
-            'duration': info.get('duration', 0),
-            'channel': info.get('uploader', ''),
-            'thumbnail': info.get('thumbnail', ''),
-        })
+        # Strip URL whitespace and use LRU-cached lookup for fast response times
+        info_data = _extract_video_info(url.strip())
+        return jsonify(info_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/clip', methods=['POST'])
 def create_clip():
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     start = float(data.get('start', 0))
     end = float(data.get('end', 60))
@@ -81,6 +102,7 @@ def create_clip():
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
                 'quiet': True,
+                'noplaylist': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
@@ -97,6 +119,7 @@ def create_clip():
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
                 'quiet': True,
+                'noplaylist': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
@@ -117,6 +140,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
