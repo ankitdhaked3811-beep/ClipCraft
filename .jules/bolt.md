@@ -1,0 +1,3 @@
+## 2025-05-18 - Video Info Metadata Caching & Playlist Bypass
+**Learning:** In video downloading/processing microservices built with `yt_dlp`, calls to `extract_info` can take multiple seconds over network HTTP queries. Moreover, URLs containing playlist parameters (`&list=...`) cause `yt_dlp` to extract playlist metadata unless `'noplaylist': True` is explicitly configured.
+**Action:** Always enable `'noplaylist': True` in `yt_dlp` options for single video/audio clip requests, and maintain a thread-safe TTL cache for `/info` responses to reduce response time from ~1–3s to <1ms for repeated requests.
