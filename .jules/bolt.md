@@ -1,0 +1,3 @@
+## 2025-05-18 - Cache video metadata & disable playlist extraction in yt-dlp
+**Learning:** `yt_dlp.extract_info` makes slow external network requests (1-3s) to extract video metadata. Caching metadata lookups by URL with `@lru_cache` reduces duplicate requests to <1ms. Furthermore, setting `'noplaylist': True` prevents yt_dlp from unnecessarily processing full playlist metadata when video URLs contain playlist query parameters (`&list=...`).
+**Action:** Always set `'noplaylist': True` in yt_dlp options when handling single video/audio URLs, and cache immutable metadata extraction results with LRU caching.
