@@ -3,24 +3,48 @@ from flask_cors import CORS
 import yt_dlp
 import tempfile
 import os
+import shutil
 import threading
 import time
+from functools import lru_cache
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # Store temp files and auto-delete after 1 hour
 temp_files = {}
 
-def cleanup_file(path, delay=3600):
+def cleanup_file(path, delay=3600, tmpdir=None):
     def _delete():
         time.sleep(delay)
         try:
-            os.remove(path)
+            if os.path.exists(path):
+                os.remove(path)
             temp_files.pop(path, None)
-        except:
+            if tmpdir and os.path.exists(tmpdir):
+                shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
             pass
     threading.Thread(target=_delete, daemon=True).start()
+
+# Bolt ⚡ Optimization: LRU Cache for expensive yt-dlp metadata extraction
+# Prevents repeated network calls to YouTube/yt-dlp for identical video requests.
+@lru_cache(maxsize=256)
+def fetch_video_info(url):
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'noplaylist': True,  # Bolt ⚡: Avoid processing full playlist metadata when URL has playlist parameters
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return {
+            'title': info.get('title', ''),
+            'duration': info.get('duration', 0),
+            'channel': info.get('uploader', ''),
+            'thumbnail': info.get('thumbnail', ''),
+        }
 
 @app.route('/health')
 def health():
@@ -28,26 +52,19 @@ def health():
 
 @app.route('/info', methods=['POST'])
 def get_info():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     url = data.get('url')
     if not url:
         return jsonify({'error': 'URL required'}), 400
     try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        return jsonify({
-            'title': info.get('title', ''),
-            'duration': info.get('duration', 0),
-            'channel': info.get('uploader', ''),
-            'thumbnail': info.get('thumbnail', ''),
-        })
+        info = fetch_video_info(url)
+        return jsonify(info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/clip', methods=['POST'])
 def create_clip():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     url = data.get('url')
     start = float(data.get('start', 0))
     end = float(data.get('end', 60))
@@ -59,7 +76,6 @@ def create_clip():
     if end - start > 185:
         return jsonify({'error': 'Max 3 minutes allowed'}), 400
 
-    duration = end - start
     quality_map = {'1080p': '1080', '720p': '720', '480p': '480', '360p': '360'}
     q = quality_map.get(quality, '720')
 
@@ -80,6 +96,7 @@ def create_clip():
                 }],
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
+                'noplaylist': True,  # Bolt ⚡: Prevent fetching/downloading playlist items
                 'quiet': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -96,6 +113,7 @@ def create_clip():
                 'merge_output_format': 'mp4',
                 'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
                 'force_keyframes_at_cuts': True,
+                'noplaylist': True,  # Bolt ⚡: Prevent fetching/downloading playlist items
                 'quiet': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -105,7 +123,7 @@ def create_clip():
             return jsonify({'error': 'Download failed'}), 500
 
         temp_files[out_path] = True
-        cleanup_file(out_path)
+        cleanup_file(out_path, tmpdir=tmpdir)
 
         return send_file(
             out_path,
@@ -117,6 +135,6 @@ def create_clip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
