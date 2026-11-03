@@ -1,0 +1,3 @@
+## 2026-08-01 - yt-dlp Metadata Extraction Caching and Playlist Parameter Guard
+**Learning:** `yt_dlp.YoutubeDL` metadata extraction is expensive, taking ~100ms just to initialize extractors and several hundred milliseconds to seconds for network roundtrips. When users submit URLs with playlist parameters or repeatedly inspect the same video metadata before clipping, yt-dlp by default extracts full playlist details and repeats external requests.
+**Action:** Always enable `'noplaylist': True` when single video metadata is needed and cache metadata with a bounded TTL cache to eliminate redundant network roundtrips.
