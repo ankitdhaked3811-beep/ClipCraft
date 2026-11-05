@@ -1,0 +1,5 @@
+# Bolt's Performance Journal
+
+## 2026-11-05 - In-Memory TTL Cache for Video Extraction & Temp Dir Cleanup
+**Learning:** `yt_dlp.YoutubeDL` extraction incurs high per-request overhead (>100ms class init + 500ms-2000ms+ external network I/O for web scraping and JSON extraction) even with `skip_download=True`. When users tweak clip ranges or reload UI components, re-extracting metadata for identical URLs stalls the server and saturates worker threads. In-memory TTL caching completely bypasses extractor initialization and network roundtrips for repeated URL queries. Additionally, `tempfile.mkdtemp` creates parent directory trees that `os.remove(file_path)` leaves behind; recursive removal of the temp directory prevents disk and inode exhaustion on ephemeral container platforms like Render.
+**Action:** Always wrap heavy third-party extractor / scraper calls behind a bounded thread-safe TTL cache, and ensure temporary directory hierarchies are cleaned up completely in background deletion tasks.
