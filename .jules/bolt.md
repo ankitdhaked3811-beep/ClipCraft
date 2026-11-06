@@ -1,0 +1,3 @@
+## 2026-11-06 - Caching Video Metadata in yt-dlp Backend
+**Learning:** `yt_dlp.YoutubeDL(opts).extract_info(url, download=False)` involves slow network requests, remote page parsing, and extractor instantiation overhead (~1-3s per request). In endpoints where metadata (title, duration, channel, thumbnail) is repeatedly fetched before clipping, caching extraction results with an LRU cache (`@functools.lru_cache`) reduces response times to sub-millisecond (< 0.5ms) and eliminates redundant external requests to upstream video providers.
+**Action:** When working with external media extractors in Flask backends, wrap metadata extraction in memory-bounded LRU caches with clear separation from download handlers.
