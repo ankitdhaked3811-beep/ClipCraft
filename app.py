@@ -3,23 +3,39 @@ from flask_cors import CORS
 import yt_dlp
 import tempfile
 import os
+import shutil
 import threading
 import time
 
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
-# Store temp files and auto-delete after 1 hour
-temp_files = {}
+# Track scheduled cleanups for temporary directories/files and protect with a lock
+temp_cleanups = {}
+_cleanup_lock = threading.Lock()
 
-def cleanup_file(path, delay=3600):
+def cleanup_path(path, delay=3600):
+    """
+    ⚡ Performance & Resource Efficiency:
+    Recursively deletes temporary directory and its contents after a set delay.
+    Cleaning up the entire temporary folder (rather than only the single output file)
+    prevents disk exhaustion and inode leakage from intermediate download parts or metadata files.
+    """
     def _delete():
         time.sleep(delay)
         try:
-            os.remove(path)
-            temp_files.pop(path, None)
-        except:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            elif os.path.exists(path):
+                os.remove(path)
+        except OSError:
             pass
+        finally:
+            with _cleanup_lock:
+                temp_cleanups.pop(path, None)
+
+    with _cleanup_lock:
+        temp_cleanups[path] = True
     threading.Thread(target=_delete, daemon=True).start()
 
 @app.route('/health')
@@ -59,10 +75,10 @@ def create_clip():
     if end - start > 185:
         return jsonify({'error': 'Max 3 minutes allowed'}), 400
 
-    duration = end - start
     quality_map = {'1080p': '1080', '720p': '720', '480p': '480', '360p': '360'}
     q = quality_map.get(quality, '720')
 
+    tmpdir = None
     try:
         tmpdir = tempfile.mkdtemp()
         ext = 'mp3' if format_type == 'audio' else 'mp4'
@@ -102,10 +118,12 @@ def create_clip():
                 ydl.download([url])
 
         if not os.path.exists(out_path):
+            if tmpdir and os.path.exists(tmpdir):
+                shutil.rmtree(tmpdir, ignore_errors=True)
             return jsonify({'error': 'Download failed'}), 500
 
-        temp_files[out_path] = True
-        cleanup_file(out_path)
+        # Schedule cleanup of the entire directory to prevent disk bloat
+        cleanup_path(tmpdir)
 
         return send_file(
             out_path,
@@ -115,8 +133,10 @@ def create_clip():
         )
 
     except Exception as e:
+        if tmpdir and os.path.exists(tmpdir):
+            shutil.rmtree(tmpdir, ignore_errors=True)
         return jsonify({'error': str(e)}), 500
 
-if name == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
